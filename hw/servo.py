@@ -9,6 +9,7 @@ except ImportError:
 class HiwonderServoController:
     FRAME_HEADER = 0x55
     CMD_SERVO_MOVE = 0x03
+    CMD_SERVO_ID_WRITE = 0x0D
 
     def __init__(self, port: str = "COM3", baudrate: int = 115200, sim: bool = False):
         self.port = port
@@ -18,7 +19,7 @@ class HiwonderServoController:
 
         if not self.sim:
             if serial is None:
-                raise RuntimeError("pyserial이 설치되지 않았습니다. 'pip install pyserial'을 실행하세요.")
+                raise RuntimeError("pyserial이 설치되지 않았습니다. 'python -m pip install pyserial'을 실행하세요.")
             self.ser = serial.Serial(self.port, self.baudrate, timeout=0.5)
             time.sleep(0.1)
 
@@ -50,6 +51,28 @@ class HiwonderServoController:
             pos_h,
             time_l,
             time_h,
+            checksum,
+        ])
+        self.ser.write(packet)
+
+    def set_servo_id(self, new_id: int, old_id: int = 0xFE):
+        """서보 ID 변경 (old_id=0xFE 브로드캐스트 사용 시 반드시 서보 1개만 연결)"""
+        new_id = max(1, min(253, int(new_id)))
+
+        if self.sim:
+            print(f"[SIM] 서보 ID 변경 패킷 전송: old={old_id} -> new={new_id}")
+            return
+
+        length = 4
+        checksum = (~(old_id + length + self.CMD_SERVO_ID_WRITE + new_id)) & 0xFF
+
+        packet = bytes([
+            self.FRAME_HEADER,
+            self.FRAME_HEADER,
+            old_id,
+            length,
+            self.CMD_SERVO_ID_WRITE,
+            new_id,
             checksum,
         ])
         self.ser.write(packet)
