@@ -1,25 +1,42 @@
 import argparse
 from comm.keyboard import get_key
 from fsm.state_machine import RobotState, StateMachine
+from hw.config import (
+    FAULT_FOLD_ANGLES_DEG,
+    LEG_NAMES,
+    LEG_SERVO_IDS,
+    PULSE_CENTER,
+    deg_to_pulse,
+)
 from hw.servo import HiwonderServoController
 
 
+def set_leg_angles(ctrl: HiwonderServoController, leg_id: int, angles_deg: tuple[float, float, float], duration_ms: int = 300):
+    """특정 다리(0~3)의 3개 관절에 목표 각도(deg) 전송"""
+    servo_ids = LEG_SERVO_IDS[leg_id]
+    for joint_idx, (sid, deg) in enumerate(zip(servo_ids, angles_deg)):
+        pulse = deg_to_pulse(leg_id, joint_idx, deg)
+        ctrl.move_servo(sid, pulse, duration_ms)
+
+
 def apply_pose(ctrl: HiwonderServoController, state: RobotState, fault_leg: int | None = None):
-    """현재 로봇 상태에 맞춰 12개 서보 목표 위치 전송"""
+    """로봇 상태에 맞춰 12개 서보 목표 자세 전송"""
     if state == RobotState.STAND:
         for sid in range(1, 13):
-            ctrl.move_servo(sid, 500, 400)
+            ctrl.move_servo(sid, PULSE_CENTER, 400)
+
     elif state == RobotState.WALK:
-        # 정상 보행 테스트용 샘플 각도(다리 0번 관절 소폭 이동)
-        ctrl.move_servo(1, 560, 300)
-        ctrl.move_servo(2, 440, 300)
-    elif state == RobotState.DEGRADED:
-        # 고장 다리(예: 1번 다리 = 서보 4, 5, 6번)를 위로 접어 올림
-        print(f"[회복탄력성 모드] {fault_leg}번 다리 회피 자세 적용")
-        ctrl.move_servo(4, 700, 300)
-        ctrl.move_servo(5, 700, 300)
+        set_leg_angles(ctrl, leg_id=0, angles_deg=(0.0, 15.0, -20.0), duration_ms=300)
+
+    elif state == RobotState.DEGRADED and fault_leg is not None:
+        print(f"[회복탄력성 모드] {fault_leg}번 다리 {LEG_NAMES[fault_leg]} 회피 자세 적용")
+        set_leg_angles(ctrl, leg_id=fault_leg, angles_deg=FAULT_FOLD_ANGLES_DEG, duration_ms=300)
+        for leg_id in range(4):
+            if leg_id != fault_leg:
+                set_leg_angles(ctrl, leg_id=leg_id, angles_deg=(0.0, 0.0, 0.0), duration_ms=300)
+
     elif state == RobotState.ESTOP:
-        print("[비상 정지] 모든 구동 명령 즉시 중단!")
+        print("[비상 정지] 모든 구동 명령 즉시 중단! 해제하려면 [s](IDLE)를 누르세요.")
 
 
 def main():
@@ -32,9 +49,12 @@ def main():
     ctrl = HiwonderServoController(port=args.port, sim=args.sim)
 
     print("=== 키보드 조종 안내 ===")
-    print("[1] 기립(STAND) | [2] 보행(WALK) | [f] 1번 다리 고장(DEGRADED)")
-    print("[r] 복구(RECOVER) | [s] 대기(IDLE) | [Space] 비상정지(ESTOP) | [q] 종료")
+    print("[1] 기립(STAND) | [2] 보행(WALK) | [r] 복구(RECOVER) | [s] 대기(IDLE)")
+    print("[3] 0번(FL) 고장 | [4] 1번(FR) 고장 | [5] 2번(RL) 고장 | [6] 3번(RR) 고장")
+    print("[Space] 비상정지(ESTOP) | [q] 종료")
     print(f"현재 상태: {fsm.state.value}\n")
+
+    fault_key_map = {"3": 0, "4": 1, "5": 2, "6": 3}
 
     try:
         while True:
@@ -49,8 +69,8 @@ def main():
                 fsm.transition("START")
             elif key == "2":
                 fsm.transition("WALK")
-            elif key == "f":
-                fsm.transition("FAULT", fault_leg=1)
+            elif key in fault_key_map:
+                fsm.transition("FAULT", fault_leg=fault_key_map[key])
             elif key == "r":
                 fsm.transition("RECOVER")
             elif key == "s":
